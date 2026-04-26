@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.venv/
+env/
+venv/
+ENV/
+
+# Configuration
+.env
+
+# Output
+Extracted/
+
+# IDEs
+.vscode/
+.idea/

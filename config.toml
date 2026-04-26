@@ -1,0 +1,27 @@
+[email]
+imap_server = "imap.gmail.com"
+imap_port = 993
+username = "guodxurun@gmail.com"
+password = "YOUR_PASSWORD_HERE" # Use EMAIL_PASSWORD environment variable for better security
+
+[[filters]]
+name = "medium"
+sender = "noreply@medium.com"
+title_keywords = []
+max_emails = 5
+
+[[filters]]
+name = "7min"
+sender = "email@newsletter.7min.ai"
+title_keywords = [] 
+max_emails = 5
+extract_format = "source_link"
+
+[output]
+output_dir = "Extracted"
+prompt_file = "analyze_prompt.md"
+analysis_timeout_ms = 300000
+
+min_request_interval_ms = 15000
+max_retries = 2
+gemini_path = "C:\\nvm4w\\nodejs\\gemini.ps1"
