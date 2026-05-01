@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from src.config import Config, FilterConfig
 from src.fetcher import EmailFetcher
 from src.parser import EmailParser, ExtractedURL
 from src.reporter import MarkdownReporter
+from src.uploader import FeishuUploader
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +288,39 @@ def run_analysis(
     return results
 
 
+def cleanup_output_directory(output_dir: Path) -> None:
+    """Move all Markdown and JSON files except today's summaries to a backup folder.
+
+    Args:
+        output_dir: Path to the output directory.
+    """
+    bak_dir = output_dir / "_bak"
+    bak_dir.mkdir(exist_ok=True)
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    logger.info("Cleaning up old reports and data in %s (keeping today's summaries)", output_dir)
+
+    moved_count = 0
+    files_to_check = list(output_dir.glob("*.md")) + list(output_dir.glob("*.json"))
+    for file_path in files_to_check:
+        # Exception: today's summary files
+        # We keep any file that starts with today's date AND contains "summaries"
+        if file_path.name.startswith(today_str) and "summaries" in file_path.name.lower():
+            continue
+
+        target_path = bak_dir / file_path.name
+        try:
+            if target_path.exists():
+                target_path.unlink()
+            shutil.move(str(file_path), str(target_path))
+            moved_count += 1
+        except Exception as e:
+            logger.error("Failed to move %s to %s: %s", file_path.name, bak_dir.name, e)
+
+    if moved_count > 0:
+        logger.info("Moved %d old files to %s", moved_count, bak_dir)
+
+
 def main(
     config_path: str,
     verbose: bool = False,
@@ -322,7 +357,7 @@ def main(
         urls = load_urls_from_json(Path(input_file))
         if urls:
             reporter = MarkdownReporter(output_dir, base_name)
-            run_analysis(
+            results = run_analysis(
                 urls,
                 Path(config.output.prompt_file),
                 reporter=reporter,
@@ -331,6 +366,15 @@ def main(
                 max_retries=config.output.max_retries,
                 gemini_path=config.output.gemini_path,
             )
+            if results and any(r.success for r in results):
+                report_path = reporter.generate_summaries_report(results, urls)
+                logger.info("Summary analysis successful, uploading report...")
+                uploader = FeishuUploader()
+                if uploader.upload_file(report_path):
+                    logger.info("Auto upload to Feishu successful.")
+                else:
+                    logger.error("Auto upload to Feishu failed.")
+                cleanup_output_directory(output_dir)
         return
 
     # Otherwise, process each filter
@@ -369,7 +413,7 @@ def main(
                 logger.error("Prompt template not found: %s. Skipping analysis.", prompt_path)
                 continue
 
-            run_analysis(
+            results = run_analysis(
                 grouped_urls,
                 prompt_path,
                 reporter=reporter,
@@ -378,6 +422,15 @@ def main(
                 max_retries=config.output.max_retries,
                 gemini_path=config.output.gemini_path,
             )
+            if results and any(r.success for r in results):
+                report_path = reporter.generate_summaries_report(results, grouped_urls)
+                logger.info("Summary analysis successful, uploading report...")
+                uploader = FeishuUploader()
+                if uploader.upload_file(report_path):
+                    logger.info("Auto upload to Feishu successful.")
+                else:
+                    logger.error("Auto upload to Feishu failed.")
+                cleanup_output_directory(output_dir)
 
     logger.info("All tasks completed.")
 
