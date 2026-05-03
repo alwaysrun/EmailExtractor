@@ -18,3 +18,7 @@ Extracted/
 # IDEs
 .vscode/
 .idea/
+
+# customer
+/dist/
+/build/

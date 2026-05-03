@@ -136,7 +136,6 @@ if __name__ == "__main__":
     import sys
     from dotenv import load_dotenv
 
-    # Setup basic logging for standalone execution
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -144,20 +143,15 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Upload a file to Feishu Drive.")
-    parser.add_argument("--file", type=str, help="Path to the file to upload")
+    parser.add_argument("--file", type=str, required=True, help="Path to the file to upload")
     parser.add_argument("--env", type=str, default=".env", help="Path to .env file (default: .env)")
 
     args = parser.parse_args()
 
-    args.file = 'D:\\xugd\\ai_cc\\auo_analyze\\EmailExtractor\\Extracted\\2026-04-30_sub-7min_summaries.md'
-    args.env = 'D:\\xugd\\ai_cc\\auo_analyze\\EmailExtractor\\.env'
-
-    # Load environment variables from specified .env file
     env_path = Path(args.env)
     if env_path.exists():
         load_dotenv(dotenv_path=env_path)
     else:
-        # Fallback to default search if specified file doesn't exist
         load_dotenv()
 
     uploader = FeishuUploader()

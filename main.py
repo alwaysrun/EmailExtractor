@@ -16,6 +16,7 @@ from src.analyzer import AnalysisResult, ArticleAnalyzer
 from src.config import Config, FilterConfig
 from src.fetcher import EmailFetcher
 from src.parser import EmailParser, ExtractedURL
+from src.paths import get_app_dir, get_config_path, get_env_path, get_prompt_path, resolve_path
 from src.reporter import MarkdownReporter
 from src.uploader import FeishuUploader
 
@@ -49,8 +50,8 @@ def parse_arguments() -> argparse.Namespace:
         "-c",
         "--config",
         type=str,
-        default="config.toml",
-        help="Path to configuration file (default: config.toml)",
+        default=None,
+        help="Path to configuration file (default: configures/config.toml)",
     )
     parser.add_argument(
         "-v",
@@ -79,11 +80,11 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config(config_path: Union[str, Path]) -> Config:
+def load_config(config_path: Optional[Union[str, Path]]) -> Config:
     """Load configuration from file.
 
     Args:
-        config_path: Path to configuration file (string or Path).
+        config_path: Path to configuration file (string or Path). If None, uses default path.
 
     Returns:
         Loaded Config instance.
@@ -91,10 +92,11 @@ def load_config(config_path: Union[str, Path]) -> Config:
     Raises:
         SystemExit: If configuration loading fails.
     """
+    resolved_path = get_config_path(str(config_path) if config_path else None)
     try:
-        return Config.from_file(config_path)
+        return Config.from_file(resolved_path)
     except FileNotFoundError:
-        logger.error("Configuration file not found: %s", config_path)
+        logger.error("Configuration file not found: %s", resolved_path)
         sys.exit(1)
     except KeyError as e:
         logger.error("Missing required configuration key: %s", e)
@@ -322,7 +324,7 @@ def cleanup_output_directory(output_dir: Path) -> None:
 
 
 def main(
-    config_path: str,
+    config_path: Optional[str] = None,
     verbose: bool = False,
     fetch_url: bool = True,
     analyze_url: bool = True,
@@ -331,7 +333,7 @@ def main(
     """Main entry point for the EmailExtractor application.
     
     Args:
-        config_path: Path to configuration file.
+        config_path: Path to configuration file. If None, uses configures/config.toml.
         verbose: If True, enable verbose logging.
         fetch_url: If True, fetch URLs from emails.
         analyze_url: If True, analyze URLs.
@@ -341,9 +343,10 @@ def main(
 
     logger.info("Starting EmailExtractor")
 
-    config = load_config(Path(config_path))
+    app_dir = get_app_dir()
+    config = load_config(config_path)
 
-    output_dir = Path(config.output.output_dir)
+    output_dir = resolve_path(config.output.output_dir, app_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if any action is requested
@@ -353,13 +356,15 @@ def main(
 
     # If an input file is provided, we only analyze that specific file (ignoring filters)
     if input_file and analyze_url and not fetch_url:
-        base_name = extract_base_name_from_path(Path(input_file)) or datetime.now().strftime("%Y-%m-%d")
-        urls = load_urls_from_json(Path(input_file))
+        input_path = resolve_path(input_file, app_dir)
+        base_name = extract_base_name_from_path(input_path) or datetime.now().strftime("%Y-%m-%d")
+        urls = load_urls_from_json(input_path)
         if urls:
             reporter = MarkdownReporter(output_dir, base_name)
+            prompt_path = get_prompt_path(config.output.prompt_file)
             results = run_analysis(
                 urls,
-                Path(config.output.prompt_file),
+                prompt_path,
                 reporter=reporter,
                 timeout_ms=config.output.analysis_timeout_ms,
                 min_interval_ms=config.output.min_request_interval_ms,
@@ -408,7 +413,7 @@ def main(
                 continue # Skip analysis for this filter if no URLs found
 
         if analyze_url and grouped_urls:
-            prompt_path = Path(config.output.prompt_file)
+            prompt_path = get_prompt_path(config.output.prompt_file)
             if not prompt_path.exists():
                 logger.error("Prompt template not found: %s. Skipping analysis.", prompt_path)
                 continue
@@ -436,7 +441,11 @@ def main(
 
 
 if __name__ == "__main__":
-    load_dotenv()
+    env_path = get_env_path()
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv()
     args = parse_arguments()
 
     # for analyze test, do not remove it
