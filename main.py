@@ -373,12 +373,15 @@ def main(
             )
             if results and any(r.success for r in results):
                 report_path = reporter.generate_summaries_report(results, urls)
-                logger.info("Summary analysis successful, uploading report...")
+                logger.info("Summary analysis successful, uploading and converting report...")
                 uploader = FeishuUploader()
-                if uploader.upload_file(report_path):
-                    logger.info("Auto upload to Feishu successful.")
+                result = uploader.upload_and_convert(report_path, convert=True)
+                if result.success:
+                    logger.info("Auto upload and convert to Feishu successful.")
+                    if result.doc_url:
+                        logger.info("Feishu Document URL: %s", result.doc_url)
                 else:
-                    logger.error("Auto upload to Feishu failed.")
+                    logger.error("Auto upload to Feishu failed: %s", result.error_msg)
                 cleanup_output_directory(output_dir)
         return
 
@@ -429,12 +432,15 @@ def main(
             )
             if results and any(r.success for r in results):
                 report_path = reporter.generate_summaries_report(results, grouped_urls)
-                logger.info("Summary analysis successful, uploading report...")
+                logger.info("Summary analysis successful, uploading and converting report...")
                 uploader = FeishuUploader()
-                if uploader.upload_file(report_path):
-                    logger.info("Auto upload to Feishu successful.")
+                result = uploader.upload_and_convert(report_path, convert=True)
+                if result.success:
+                    logger.info("Auto upload and convert to Feishu successful.")
+                    if result.doc_url:
+                        logger.info("Feishu Document URL: %s", result.doc_url)
                 else:
-                    logger.error("Auto upload to Feishu failed.")
+                    logger.error("Auto upload to Feishu failed: %s", result.error_msg)
                 cleanup_output_directory(output_dir)
 
     logger.info("All tasks completed.")
@@ -450,7 +456,7 @@ if __name__ == "__main__":
 
     # for analyze test, do not remove it
     # args.fetch_url = False
-    # args.input_file = './Extracted/2026-04-23-sub_urls.json'
+    # args.input_file = './Extracted/2026-05-05_sub-medium_urls.json'
     # args.verbose = True
 
     # args.analyze_url=False
