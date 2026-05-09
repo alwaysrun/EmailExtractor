@@ -2,6 +2,7 @@
 
 Automated pipeline that fetches technical article digests from emails, extracts URLs, and performs AI-powered analysis using Gemini CLI.
 
+
 ## Features
 
 - **Email Fetching**: Connect to IMAP servers and filter unread emails by sender/subject
