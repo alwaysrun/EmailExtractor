@@ -9,6 +9,8 @@ name = "medium"
 sender = "noreply@medium.com"
 title_keywords = []
 max_emails = 5
+extract_format = "medium"
+
 
 [[filters]]
 name = "7min"

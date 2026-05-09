@@ -115,7 +115,7 @@ def fetch_and_parse_emails(config: Config, filter_config: FilterConfig) -> Tuple
         Tuple of (List of URL groups where each group is from one email, total unread count).
     """
     grouped_urls: List[List[ExtractedURL]] = []
-    parser = EmailParser(extract_format=filter_config.extract_format)
+    parser = EmailParser(extract_format=filter_config.extract_format, filter_name=filter_config.name)
     total_unread = 0
 
     try:
@@ -458,7 +458,7 @@ if __name__ == "__main__":
     # args.input_file = './Extracted/2026-05-05_sub-medium_urls.json'
     # args.verbose = True
 
-    # args.analyze_url=False
+    args.analyze_url=False
 
     setup_logging(verbose=args.verbose)
 
@@ -474,10 +474,10 @@ if __name__ == "__main__":
         logger.error("Please check your network connection and try again.")
         sys.exit(1)
 
-    # main(
-    #     config_path=args.config,
-    #     verbose=args.verbose,
-    #     fetch_url=args.fetch_url,
-    #     analyze_url=args.analyze_url,
-    #     input_file=args.input_file,
-    # )
+    main(
+        config_path=args.config,
+        verbose=args.verbose,
+        fetch_url=args.fetch_url,
+        analyze_url=args.analyze_url,
+        input_file=args.input_file,
+    )
