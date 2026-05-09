@@ -22,8 +22,13 @@ class ParserFactory:
         elif extract_format == "source_link":
             from .source_link import SourceLinkParser
             return SourceLinkParser()
+        
+        # 3. 'BestBlogs' format
+        elif extract_format == "bestblogs":
+            from .parse_bestblogs import BestBlogsParser
+            return BestBlogsParser()
 
-        # 3. 'Name ( URL )' format
+        # 4. 'Name ( URL )' format
         elif extract_format == "name_url":
             # Fallback for old configs where name='medium' but format='name_url'
             if filter_name.lower() == "medium":
@@ -32,7 +37,7 @@ class ParserFactory:
             from .name_url import NameUrlParser
             return NameUrlParser()
             
-        # 4. 'All URLs' format
+        # 5. 'All URLs' format
         elif extract_format == "all_urls":
             from .all_urls import AllUrlsParser
             return AllUrlsParser()            
