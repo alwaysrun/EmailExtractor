@@ -17,11 +17,14 @@ title_keywords = []
 max_emails = 5
 extract_format = "source_link"
 
-[output]
+[analysis]
 output_dir = "Extracted"
 prompt_file = "analyze_prompt.md"
 analysis_timeout_ms = 300000
-
 min_request_interval_ms = 15000
 max_retries = 2
 gemini_path = "C:\\nvm4w\\nodejs\\gemini.ps1"
+
+[network]
+network_check_retry_count = 3
+network_check_interval_seconds = 15

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from src.analyzer import AnalysisResult, ArticleAnalyzer
 from src.config import Config, FilterConfig
 from src.fetcher import EmailFetcher
+from src.network_checker import check_network_connectivity
 from src.parser import EmailParser, ExtractedURL
 from src.paths import get_app_dir, get_config_path, get_env_path, get_prompt_path, resolve_path
 from src.reporter import MarkdownReporter
@@ -339,14 +340,12 @@ def main(
         analyze_url: If True, analyze URLs.
         input_file: Optional path to input JSON file for analysis.
     """
-    setup_logging(verbose=verbose)
-
     logger.info("Starting EmailExtractor")
 
     app_dir = get_app_dir()
     config = load_config(config_path)
 
-    output_dir = resolve_path(config.output.output_dir, app_dir)
+    output_dir = resolve_path(config.analysis.output_dir, app_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if any action is requested
@@ -361,15 +360,15 @@ def main(
         urls = load_urls_from_json(input_path)
         if urls:
             reporter = MarkdownReporter(output_dir, base_name)
-            prompt_path = get_prompt_path(config.output.prompt_file)
+            prompt_path = get_prompt_path(config.analysis.prompt_file)
             results = run_analysis(
                 urls,
                 prompt_path,
                 reporter=reporter,
-                timeout_ms=config.output.analysis_timeout_ms,
-                min_interval_ms=config.output.min_request_interval_ms,
-                max_retries=config.output.max_retries,
-                gemini_path=config.output.gemini_path,
+                timeout_ms=config.analysis.analysis_timeout_ms,
+                min_interval_ms=config.analysis.min_request_interval_ms,
+                max_retries=config.analysis.max_retries,
+                gemini_path=config.analysis.gemini_path,
             )
             if results and any(r.success for r in results):
                 report_path = reporter.generate_summaries_report(results, urls)
@@ -416,7 +415,7 @@ def main(
                 continue # Skip analysis for this filter if no URLs found
 
         if analyze_url and grouped_urls:
-            prompt_path = get_prompt_path(config.output.prompt_file)
+            prompt_path = get_prompt_path(config.analysis.prompt_file)
             if not prompt_path.exists():
                 logger.error("Prompt template not found: %s. Skipping analysis.", prompt_path)
                 continue
@@ -425,10 +424,10 @@ def main(
                 grouped_urls,
                 prompt_path,
                 reporter=reporter,
-                timeout_ms=config.output.analysis_timeout_ms,
-                min_interval_ms=config.output.min_request_interval_ms,
-                max_retries=config.output.max_retries,
-                gemini_path=config.output.gemini_path,
+                timeout_ms=config.analysis.analysis_timeout_ms,
+                min_interval_ms=config.analysis.min_request_interval_ms,
+                max_retries=config.analysis.max_retries,
+                gemini_path=config.analysis.gemini_path,
             )
             if results and any(r.success for r in results):
                 report_path = reporter.generate_summaries_report(results, grouped_urls)
@@ -461,10 +460,24 @@ if __name__ == "__main__":
 
     # args.analyze_url=False
 
-    main(
-        config_path=args.config,
-        verbose=args.verbose,
-        fetch_url=args.fetch_url,
-        analyze_url=args.analyze_url,
-        input_file=args.input_file,
+    setup_logging(verbose=args.verbose)
+
+    config = load_config(args.config)
+
+    success, error_msg = check_network_connectivity(
+        gemini_path=config.analysis.gemini_path,
+        max_retries=config.network.network_check_retry_count,
+        retry_interval_seconds=config.network.network_check_interval_seconds,
     )
+    if not success:
+        logger.error("Network connectivity check failed: %s", error_msg)
+        logger.error("Please check your network connection and try again.")
+        sys.exit(1)
+
+    # main(
+    #     config_path=args.config,
+    #     verbose=args.verbose,
+    #     fetch_url=args.fetch_url,
+    #     analyze_url=args.analyze_url,
+    #     input_file=args.input_file,
+    # )

@@ -31,8 +31,8 @@ class FilterConfig:
 
 
 @dataclasses.dataclass
-class OutputConfig:
-    """Output configuration."""
+class AnalysisConfig:
+    """Analysis configuration."""
 
     output_dir: str
     prompt_file: str
@@ -43,12 +43,21 @@ class OutputConfig:
 
 
 @dataclasses.dataclass
+class NetworkConfig:
+    """Network configuration."""
+
+    network_check_retry_count: int = 3
+    network_check_interval_seconds: int = 15
+
+
+@dataclasses.dataclass
 class Config:
     """Main configuration container."""
 
     email: EmailConfig
     filters: List[FilterConfig]
-    output: OutputConfig
+    analysis: AnalysisConfig
+    network: NetworkConfig
 
     @classmethod
     def from_file(cls, config_path: Path) -> "Config":
@@ -105,13 +114,18 @@ class Config:
                 extract_format=f.get("extract_format", "name_url"),
             ))
 
-        output_config = OutputConfig(
-            output_dir=raw_config["output"].get("output_dir", "Extracted"),
-            prompt_file=raw_config["output"].get("prompt_file", "analyze_prompt.md"),
-            analysis_timeout_ms=raw_config["output"].get("analysis_timeout_ms", 300000),
-            min_request_interval_ms=raw_config["output"].get("min_request_interval_ms", 1000),
-            max_retries=raw_config["output"].get("max_retries", 3),
-            gemini_path=raw_config["output"].get("gemini_path", "gemini"),
+        analysis_config = AnalysisConfig(
+            output_dir=raw_config["analysis"].get("output_dir", "Extracted"),
+            prompt_file=raw_config["analysis"].get("prompt_file", "analyze_prompt.md"),
+            analysis_timeout_ms=raw_config["analysis"].get("analysis_timeout_ms", 300000),
+            min_request_interval_ms=raw_config["analysis"].get("min_request_interval_ms", 1000),
+            max_retries=raw_config["analysis"].get("max_retries", 3),
+            gemini_path=raw_config["analysis"].get("gemini_path", "gemini"),
         )
 
-        return cls(email=email_config, filters=filters, output=output_config)
+        network_config = NetworkConfig(
+            network_check_retry_count=raw_config["network"].get("network_check_retry_count", 3),
+            network_check_interval_seconds=raw_config["network"].get("network_check_interval_seconds", 15),
+        )
+
+        return cls(email=email_config, filters=filters, analysis=analysis_config, network=network_config)
