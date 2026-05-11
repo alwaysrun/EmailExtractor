@@ -458,7 +458,7 @@ if __name__ == "__main__":
     # args.input_file = './Extracted/2026-05-05_sub-medium_urls.json'
     # args.verbose = True
 
-    args.analyze_url=False
+    # args.analyze_url=False
 
     setup_logging(verbose=args.verbose)
 
