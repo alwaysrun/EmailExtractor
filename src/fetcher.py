@@ -2,6 +2,7 @@
 
 import imaplib
 import logging
+import time
 from email import message_from_bytes
 from email.header import decode_header
 from email.message import Message
@@ -10,6 +11,9 @@ from typing import List, Optional, Tuple
 from src.config import Config, FilterConfig
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_RECONNECT_DELAY_SECONDS = 5
+DEFAULT_MAX_RECONNECT_RETRIES = 3
 
 
 class EmailFetcher:
@@ -57,6 +61,60 @@ class EmailFetcher:
                 pass
             self._connection = None
             logger.info("Disconnected from IMAP server")
+
+    def is_connected(self) -> bool:
+        """Check if IMAP connection is still alive.
+
+        Returns:
+            True if connection is alive, False otherwise.
+        """
+        if not self._connection:
+            return False
+        try:
+            status, _ = self._connection.noop()
+            return status == "OK"
+        except (imaplib.IMAP4.error, OSError, ConnectionError):
+            return False
+
+    def ensure_connected(
+        self,
+        max_retries: int = DEFAULT_MAX_RECONNECT_RETRIES,
+        retry_delay: float = DEFAULT_RECONNECT_DELAY_SECONDS,
+    ) -> None:
+        """Ensure IMAP connection is alive, reconnect if necessary.
+
+        Args:
+            max_retries: Maximum number of reconnection attempts.
+            retry_delay: Delay in seconds between retry attempts.
+
+        Raises:
+            ConnectionError: If connection cannot be established after retries.
+        """
+        if self.is_connected():
+            return
+
+        logger.warning("IMAP connection lost, attempting to reconnect...")
+        self._connection = None
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.connect()
+                logger.info("Reconnection successful on attempt %d/%d", attempt, max_retries)
+                return
+            except ConnectionError as e:
+                last_error = e
+                logger.warning(
+                    "Reconnection attempt %d/%d failed: %s",
+                    attempt, max_retries, e
+                )
+                if attempt < max_retries:
+                    logger.info("Waiting %.1f seconds before next attempt...", retry_delay)
+                    time.sleep(retry_delay)
+
+        raise ConnectionError(
+            f"Failed to reconnect after {max_retries} attempts: {last_error}"
+        )
 
     def __enter__(self) -> "EmailFetcher":
         """Context manager entry - establishes connection."""

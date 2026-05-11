@@ -24,6 +24,17 @@ from src.uploader import FeishuUploader
 logger = logging.getLogger(__name__)
 
 
+class TimeoutAttemptFilter(logging.Filter):
+    """Filter that excludes 'Timeout (attempt 2)' errors from file logging."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno == logging.ERROR:
+            msg = record.getMessage()
+            if "Timeout (attempt 2)" in msg:
+                return False
+        return True
+
+
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging for the application.
 
@@ -31,11 +42,29 @@ def setup_logging(verbose: bool = False) -> None:
         verbose: If True, enable DEBUG level logging.
     """
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    ))
+
+    error_log_path = get_app_dir() / "logs" / "error.log"
+    error_log_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    file_handler = logging.FileHandler(error_log_path, encoding="utf-8")
+    file_handler.setLevel(logging.ERROR)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    file_handler.addFilter(TimeoutAttemptFilter())
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -104,11 +133,11 @@ def load_config(config_path: Optional[Union[str, Path]]) -> Config:
         sys.exit(1)
 
 
-def fetch_and_parse_emails(config: Config, filter_config: FilterConfig) -> Tuple[List[List[ExtractedURL]], int]:
+def fetch_and_parse_emails(fetcher: EmailFetcher, filter_config: FilterConfig) -> Tuple[List[List[ExtractedURL]], int]:
     """Fetch emails and extract URLs with progress output for a specific filter.
 
     Args:
-        config: Application configuration.
+        fetcher: EmailFetcher instance with active IMAP connection.
         filter_config: Specific filter configuration.
 
     Returns:
@@ -119,26 +148,26 @@ def fetch_and_parse_emails(config: Config, filter_config: FilterConfig) -> Tuple
     total_unread = 0
 
     try:
-        with EmailFetcher(config) as fetcher:
-            emails, total_unread = fetcher.fetch_unread_emails(filter_config)
-            logger.info(
-                "Filter '%s': Processing %d emails (total unread: %d)",
-                filter_config.name, len(emails), total_unread
-            )
+        fetcher.ensure_connected()
+        emails, total_unread = fetcher.fetch_unread_emails(filter_config)
+        logger.info(
+            "Filter '%s': Processing %d emails (total unread: %d)",
+            filter_config.name, len(emails), total_unread
+        )
 
-            for idx, message in enumerate(emails, start=1):
-                subject = fetcher._decode_header(message.get("Subject", "Unknown"))
+        for idx, message in enumerate(emails, start=1):
+            subject = fetcher._decode_header(message.get("Subject", "Unknown"))
+            logger.info(
+                "Filter '%s' [Email %d/%d] Extracting URLs from: %s",
+                filter_config.name, idx, len(emails), subject
+            )
+            urls = parser.parse_email(message)
+            if urls:
+                grouped_urls.append(urls)
                 logger.info(
-                    "Filter '%s' [Email %d/%d] Extracting URLs from: %s",
-                    filter_config.name, idx, len(emails), subject
+                    "Filter '%s' [Email %d/%d] Found %d URLs",
+                    filter_config.name, idx, len(emails), len(urls)
                 )
-                urls = parser.parse_email(message)
-                if urls:
-                    grouped_urls.append(urls)
-                    logger.info(
-                        "Filter '%s' [Email %d/%d] Found %d URLs",
-                        filter_config.name, idx, len(emails), len(urls)
-                    )
 
     except ConnectionError as e:
         logger.error("Failed to connect to email server: %s", e)
@@ -384,63 +413,68 @@ def main(
                 cleanup_output_directory(output_dir)
         return
 
-    # Otherwise, process each filter
-    for filter_config in config.filters:
-        logger.info("Processing filter: %s", filter_config.name)
-        
-        base_name = datetime.now().strftime("%Y-%m-%d")
-        reporter = MarkdownReporter(output_dir, base_name, filter_name=filter_config.name)
-        
-        grouped_urls: List[List[ExtractedURL]] = []
+    # Otherwise, process each filter with a single IMAP connection
+    try:
+        with EmailFetcher(config) as fetcher:
+            for filter_config in config.filters:
+                logger.info("Processing filter: %s", filter_config.name)
+                
+                base_name = datetime.now().strftime("%Y-%m-%d")
+                reporter = MarkdownReporter(output_dir, base_name, filter_name=filter_config.name)
+                
+                grouped_urls: List[List[ExtractedURL]] = []
 
-        if fetch_url:
-            fetched_urls, total_unread = fetch_and_parse_emails(config, filter_config)
-            if fetched_urls:
-                grouped_urls = fetched_urls
-                json_path = reporter.generate_urls_report(grouped_urls)
-                total_urls = sum(len(group) for group in grouped_urls)
-                logger.info(
-                    "Filter '%s': Extraction complete. Found %d URLs across %d emails.",
-                    filter_config.name, total_urls, len(grouped_urls)
-                )
-                logger.info("URLs JSON data saved to: %s", json_path)
-            else:
-                if total_unread == 0:
-                    logger.info("Filter '%s': No unread emails found in inbox.", filter_config.name)
-                else:
-                    logger.info(
-                        "Filter '%s': No emails matched criteria (Total unread: %d).",
-                        filter_config.name, total_unread
+                if fetch_url:
+                    fetched_urls, total_unread = fetch_and_parse_emails(fetcher, filter_config)
+                    if fetched_urls:
+                        grouped_urls = fetched_urls
+                        json_path = reporter.generate_urls_report(grouped_urls)
+                        total_urls = sum(len(group) for group in grouped_urls)
+                        logger.info(
+                            "Filter '%s': Extraction complete. Found %d URLs across %d emails.",
+                            filter_config.name, total_urls, len(grouped_urls)
+                        )
+                        logger.info("URLs JSON data saved to: %s", json_path)
+                    else:
+                        if total_unread == 0:
+                            logger.info("Filter '%s': No unread emails found in inbox.", filter_config.name)
+                        else:
+                            logger.info(
+                                "Filter '%s': No emails matched criteria (Total unread: %d).",
+                                filter_config.name, total_unread
+                            )
+                        continue
+
+                if analyze_url and grouped_urls:
+                    prompt_path = get_prompt_path(config.analysis.prompt_file)
+                    if not prompt_path.exists():
+                        logger.error("Prompt template not found: %s. Skipping analysis.", prompt_path)
+                        continue
+
+                    results = run_analysis(
+                        grouped_urls,
+                        prompt_path,
+                        reporter=reporter,
+                        timeout_ms=config.analysis.analysis_timeout_ms,
+                        min_interval_ms=config.analysis.min_request_interval_ms,
+                        max_retries=config.analysis.max_retries,
+                        gemini_path=config.analysis.gemini_path,
                     )
-                continue # Skip analysis for this filter if no URLs found
-
-        if analyze_url and grouped_urls:
-            prompt_path = get_prompt_path(config.analysis.prompt_file)
-            if not prompt_path.exists():
-                logger.error("Prompt template not found: %s. Skipping analysis.", prompt_path)
-                continue
-
-            results = run_analysis(
-                grouped_urls,
-                prompt_path,
-                reporter=reporter,
-                timeout_ms=config.analysis.analysis_timeout_ms,
-                min_interval_ms=config.analysis.min_request_interval_ms,
-                max_retries=config.analysis.max_retries,
-                gemini_path=config.analysis.gemini_path,
-            )
-            if results and any(r.success for r in results):
-                report_path = reporter.generate_summaries_report(results, grouped_urls)
-                logger.info("Summary analysis successful, uploading and converting report...")
-                uploader = FeishuUploader()
-                result = uploader.upload_and_convert(report_path, convert=True)
-                if result.success:
-                    logger.info("Auto upload and convert to Feishu successful.")
-                    if result.doc_url:
-                        logger.info("Feishu Document URL: %s", result.doc_url)
-                else:
-                    logger.error("Auto upload to Feishu failed: %s", result.error_msg)
-                cleanup_output_directory(output_dir)
+                    if results and any(r.success for r in results):
+                        report_path = reporter.generate_summaries_report(results, grouped_urls)
+                        logger.info("Summary analysis successful, uploading and converting report...")
+                        uploader = FeishuUploader()
+                        result = uploader.upload_and_convert(report_path, convert=True)
+                        if result.success:
+                            logger.info("Auto upload and convert to Feishu successful.")
+                            if result.doc_url:
+                                logger.info("Feishu Document URL: %s", result.doc_url)
+                        else:
+                            logger.error("Auto upload to Feishu failed: %s", result.error_msg)
+                        cleanup_output_directory(output_dir)
+    except ConnectionError as e:
+        logger.error("Failed to connect to email server: %s", e)
+        sys.exit(1)
 
     logger.info("All tasks completed.")
 
@@ -454,8 +488,8 @@ if __name__ == "__main__":
     args = parse_arguments()
 
     # for analyze test, do not remove it
-    # args.fetch_url = False
-    # args.input_file = './Extracted/2026-05-05_sub-medium_urls.json'
+    args.fetch_url = False
+    args.input_file = './Extracted/2026-05-11_sub-bestblogs_urls.json'
     # args.verbose = True
 
     # args.analyze_url=False
