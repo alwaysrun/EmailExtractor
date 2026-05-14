@@ -402,7 +402,10 @@ def main(
             if results and any(r.success for r in results):
                 report_path = reporter.generate_summaries_report(results, urls)
                 logger.info("Summary analysis successful, uploading and converting report...")
-                uploader = FeishuUploader()
+                uploader = FeishuUploader(
+                    upload_folder=config.feishu.upload_folder,
+                    archive_folder=config.feishu.archive_folder
+                )
                 result = uploader.upload_and_convert(report_path, convert=True)
                 if result.success:
                     logger.info("Auto upload and convert to Feishu successful.")
@@ -463,7 +466,10 @@ def main(
                     if results and any(r.success for r in results):
                         report_path = reporter.generate_summaries_report(results, grouped_urls)
                         logger.info("Summary analysis successful, uploading and converting report...")
-                        uploader = FeishuUploader()
+                        uploader = FeishuUploader(
+                            upload_folder=config.feishu.upload_folder,
+                            archive_folder=config.feishu.archive_folder
+                        )
                         result = uploader.upload_and_convert(report_path, convert=True)
                         if result.success:
                             logger.info("Auto upload and convert to Feishu successful.")
@@ -488,8 +494,8 @@ if __name__ == "__main__":
     args = parse_arguments()
 
     # for analyze test, do not remove it
-    args.fetch_url = False
-    args.input_file = './Extracted/2026-05-11_sub-bestblogs_urls.json'
+    # args.fetch_url = False
+    # args.input_file = './Extracted/2026-05-11_sub-bestblogs_urls.json'
     # args.verbose = True
 
     # args.analyze_url=False

@@ -51,6 +51,14 @@ class NetworkConfig:
 
 
 @dataclasses.dataclass
+class FeishuConfig:
+    """Feishu configuration."""
+
+    upload_folder: str
+    archive_folder: str
+
+
+@dataclasses.dataclass
 class Config:
     """Main configuration container."""
 
@@ -58,6 +66,7 @@ class Config:
     filters: List[FilterConfig]
     analysis: AnalysisConfig
     network: NetworkConfig
+    feishu: FeishuConfig
 
     @classmethod
     def from_file(cls, config_path: Path) -> "Config":
@@ -83,7 +92,7 @@ class Config:
             imap_server=raw_config["email"]["imap_server"],
             imap_port=raw_config["email"]["imap_port"],
             username=raw_config["email"]["username"],
-            password=os.environ.get("EMAIL_PASSWORD", raw_config["email"]["password"]),
+            password=os.environ.get("EMAIL_PASSWORD", raw_config["email"].get("password", "")),
         )
 
         filters_data = raw_config.get("filters", [])
@@ -128,4 +137,15 @@ class Config:
             network_check_interval_seconds=raw_config["network"].get("network_check_interval_seconds", 15),
         )
 
-        return cls(email=email_config, filters=filters, analysis=analysis_config, network=network_config)
+        feishu_config = FeishuConfig(
+            upload_folder=raw_config.get("feishu", {}).get("upload_folder", ""),
+            archive_folder=raw_config.get("feishu", {}).get("archive_folder", ""),
+        )
+
+        return cls(
+            email=email_config,
+            filters=filters,
+            analysis=analysis_config,
+            network=network_config,
+            feishu=feishu_config,
+        )

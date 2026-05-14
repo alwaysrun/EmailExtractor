@@ -50,9 +50,8 @@ class FeishuUploader:
         Args:
             app_id: Feishu App ID. If None, reads from APP_ID env var.
             app_secret: Feishu App Secret. If None, reads from APP_SECRET env var.
-            upload_folder: Target folder token for uploads. If None, reads from FEISHU_UPLOAD_FOLDER env var.
-            archive_folder: Target Feishu folder token to move converted documents. 
-                           If None, reads from FEISHU_ARCHIVE_FOLDER env var.
+            upload_folder: Target folder token for uploads.
+            archive_folder: Target Feishu folder token to move converted documents.
         """
         self.app_id = app_id or os.environ.get("APP_ID")
         self.app_secret = app_secret or os.environ.get("APP_SECRET")

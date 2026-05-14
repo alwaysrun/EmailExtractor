@@ -1,8 +1,12 @@
+# Configuration file for EmailExtractor
+# IMPORTANT: DO NOT store sensitive information like passwords or API secrets here.
+# Use the .env file for security-sensitive data.
+
 [email]
 imap_server = "imap.gmail.com"
 imap_port = 993
 username = "guodxurun@gmail.com"
-password = "YOUR_PASSWORD_HERE" # Use EMAIL_PASSWORD environment variable for better security
+# Password must be set in .env as EMAIL_PASSWORD for security
 
 [[filters]]
 name = "medium"
@@ -37,3 +41,8 @@ gemini_path = "C:\\nvm4w\\nodejs\\gemini.ps1"
 [network]
 network_check_retry_count = 3
 network_check_interval_seconds = 15
+
+[feishu]
+# Credentials (APP_ID, APP_SECRET) must be stored in .env for security
+upload_folder = "NunQfLOqBlzsr1dvvysc7WCrnbg"
+archive_folder = "KmRwf1h9HlGqowdG4AbcP1iQn1g"
