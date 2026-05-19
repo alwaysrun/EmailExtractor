@@ -419,6 +419,13 @@ def main(
     # Otherwise, process each filter with a single IMAP connection
     try:
         with EmailFetcher(config) as fetcher:
+            # Capture initial UNSEEN state once before any filter processing.
+            # This ensures all filters operate on the same initial unread state,
+            # making filters independent even though emails are marked as seen
+            # immediately after each filter processes them.
+            if fetch_url:
+                fetcher.capture_initial_unseen_state()
+
             for filter_config in config.filters:
                 logger.info("Processing filter: %s", filter_config.name)
                 
@@ -478,6 +485,9 @@ def main(
                         else:
                             logger.error("Auto upload to Feishu failed: %s", result.error_msg)
                         cleanup_output_directory(output_dir)
+
+            # Clear the cached initial state after all filters are processed
+            fetcher.clear_initial_unseen_state()
     except ConnectionError as e:
         logger.error("Failed to connect to email server: %s", e)
         sys.exit(1)

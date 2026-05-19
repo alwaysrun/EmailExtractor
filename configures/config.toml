@@ -12,22 +12,28 @@ username = "guodxurun@gmail.com"
 name = "medium"
 sender = "noreply@medium.com"
 title_keywords = []
-max_emails = 5
+max_emails = 3
 extract_format = "medium"
-
 
 [[filters]]
 name = "7min"
 sender = "email@newsletter.7min.ai"
-title_keywords = [] 
-max_emails = 5
+title_keywords = []
+max_emails = 3
 extract_format = "source_link"
 
 [[filters]]
-name = "bestblogs"
+name = "gino"
 sender = "gino@bestblogs.dev"
 title_keywords = []
-max_emails = 5
+max_emails = 3
+extract_format = "bestblogs"
+
+[[filters]]
+name = "bestblogs"
+sender = "noreply@bestblogs.dev"
+title_keywords = []
+max_emails = 3
 extract_format = "bestblogs"
 
 [analysis]

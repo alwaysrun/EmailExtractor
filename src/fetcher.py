@@ -35,6 +35,10 @@ class EmailFetcher:
         # between consecutive filter calls (each SELECT pushes EXISTS/RECENT
         # for the entire mailbox, which is noisy on large inboxes).
         self._selected_mailbox: Optional[str] = None
+        # Cache of initial UNSEEN email IDs captured once at the start of processing.
+        # This ensures all filters operate on the same initial unread state,
+        # making filters independent even though emails are marked as seen immediately.
+        self._initial_unseen_ids: Optional[List[bytes]] = None
 
     def connect(self) -> None:
         """Establish IMAP connection and authenticate.
@@ -140,6 +144,48 @@ class EmailFetcher:
         """Context manager exit - closes connection."""
         self.disconnect()
 
+    def capture_initial_unseen_state(self) -> int:
+        """Capture the initial UNSEEN email IDs once at the start of processing.
+
+        This must be called before any filter processing begins. All subsequent
+        filter operations will use this cached snapshot, ensuring filters are
+        independent even though emails are marked as seen immediately after
+        each filter processes them.
+
+        Returns:
+            Total number of initially unread emails.
+
+        Raises:
+            RuntimeError: If not connected to IMAP server.
+        """
+        if not self._connection:
+            raise RuntimeError("Not connected to IMAP server")
+
+        if self._selected_mailbox != "INBOX":
+            self._connection.select("INBOX")
+            self._selected_mailbox = "INBOX"
+
+        status, email_ids = self._connection.search(None, "UNSEEN")
+        if status != "OK":
+            logger.warning("Failed to search UNSEEN emails")
+            self._initial_unseen_ids = []
+            return 0
+
+        self._initial_unseen_ids = email_ids[0].split()
+        total = len(self._initial_unseen_ids)
+        logger.info(
+            "Captured initial UNSEEN state: %d emails (IDs: %s)",
+            total, [id_.decode() for id_ in self._initial_unseen_ids]
+        )
+        return total
+
+    def clear_initial_unseen_state(self) -> None:
+        """Clear the cached initial UNSEEN state.
+
+        Should be called after all filter processing is complete.
+        """
+        self._initial_unseen_ids = None
+
     def count_total_unread_emails(self) -> int:
         """Count total unread emails in inbox.
 
@@ -189,6 +235,9 @@ class EmailFetcher:
                     # Reset mailbox state: after reconnect the new session has no
                     # selected mailbox, so _do_fetch_unread_emails must re-issue SELECT.
                     self._selected_mailbox = None
+                    # Clear cached initial state - after reconnect, the cached IDs
+                    # may no longer be valid in the new IMAP session.
+                    self._initial_unseen_ids = None
                     self.ensure_connected()
                 else:
                     raise ConnectionError(
@@ -216,41 +265,57 @@ class EmailFetcher:
             self._connection.select("INBOX")
             self._selected_mailbox = "INBOX"
 
-        # Single SEARCH for all UNSEEN emails to count total unread.
-        status, total_email_ids = self._connection.search(None, "UNSEEN")
-        total_unread = len(total_email_ids[0].split()) if status == "OK" else 0
+        # Use cached initial UNSEEN state if available (for filter independence),
+        # otherwise search for current UNSEEN emails.
+        if self._initial_unseen_ids is not None:
+            total_unread = len(self._initial_unseen_ids)
+            candidate_ids = self._initial_unseen_ids.copy()
+            logger.info(
+                "Filter '%s': Using cached initial UNSEEN state (%d emails)",
+                filter_config.name, total_unread
+            )
+        else:
+            # Fallback: search for current UNSEEN emails (original behavior)
+            status, total_email_ids = self._connection.search(None, "UNSEEN")
+            total_unread = len(total_email_ids[0].split()) if status == "OK" else 0
+            candidate_ids = total_email_ids[0].split() if status == "OK" else []
 
-        # Build filtered search criteria (UNSEEN + optional FROM filter).
-        search_criteria = ["UNSEEN"]
-        if filter_config.sender:
-            search_criteria.extend(["FROM", filter_config.sender])
+        # When using cached initial state, we must filter by sender client-side
+        # because IMAP UNSEEN state has changed. When not using cache, we can
+        # try server-side FROM search first.
+        using_cached_state = self._initial_unseen_ids is not None
 
-        # Re-use the already-fetched list when no sender filter is active to
-        # avoid an extra round-trip; otherwise issue a narrowed search.
-        if filter_config.sender:
+        if using_cached_state and filter_config.sender:
+            # Client-side sender filtering: fetch headers and filter locally
+            email_id_list = self._filter_ids_by_sender_client_side(
+                candidate_ids, filter_config.sender, filter_config.name
+            )
+        elif not using_cached_state and filter_config.sender:
+            # Server-side FROM search (original behavior)
+            search_criteria = ["UNSEEN", "FROM", filter_config.sender]
             status, email_ids = self._connection.search(None, *search_criteria)
             if status != "OK":
                 logger.warning("Failed to search emails for filter: %s", filter_config.name)
                 return [], total_unread
             email_id_list = email_ids[0].split()
-            # When the server-side FROM search returns nothing but there are unread
-            # emails, the configured sender address likely doesn't match the actual
-            # From header.  Log all UNSEEN senders at WARNING level so the user can
-            # verify and correct config.toml without resorting to a mail client.
+            # Fallback to client-side if server-side returns nothing
             if not email_id_list and total_unread > 0:
                 self._log_unseen_senders(
-                    total_email_ids[0].split(), filter_config.name, filter_config.sender
+                    candidate_ids, filter_config.name, filter_config.sender
+                )
+                email_id_list = self._filter_ids_by_sender_client_side(
+                    candidate_ids, filter_config.sender, filter_config.name
                 )
         else:
-            email_id_list = total_email_ids[0].split() if status == "OK" else []
+            # No sender filter: use all candidate IDs
+            email_id_list = candidate_ids
 
+        # Apply max_emails limit before fetching
         max_emails = filter_config.max_emails
-        email_id_list = email_id_list[-max_emails:] if len(email_id_list) > max_emails else email_id_list
+        if len(email_id_list) > max_emails:
+            email_id_list = email_id_list[-max_emails:]
 
         emails: List[Message] = []
-        # Track IDs of emails that pass the filter so we can mark them \Seen
-        # only after the entire fetch+filter pass succeeds.  Emails that do NOT
-        # match the filter remain UNSEEN on the server.
         matched_ids: List[bytes] = []
 
         for email_id in email_id_list:
@@ -276,8 +341,8 @@ class EmailFetcher:
                 matched_ids.append(email_id)
 
         # Mark all matched emails as \Seen in a single STORE round-trip.
-        # Unmatched emails remain UNSEEN so other filters or future runs can
-        # still discover them.
+        # This is done immediately for resilience - emails are marked as seen
+        # right after extraction, so if processing fails later, we don't reprocess.
         if matched_ids:
             self._mark_as_seen(matched_ids, filter_config.name)
 
@@ -286,6 +351,83 @@ class EmailFetcher:
             filter_config.name, len(emails), total_unread
         )
         return emails, total_unread
+
+    def _filter_ids_by_sender_client_side(
+        self,
+        email_ids: "List[bytes]",
+        sender_filter: str,
+        filter_name: str,
+    ) -> "List[bytes]":
+        """Filter email IDs by sender using client-side header inspection.
+
+        Used when operating on cached initial UNSEEN state, where IMAP UNSEEN
+        search would return incorrect results due to emails already marked as seen.
+
+        Args:
+            email_ids: List of email IDs to filter.
+            sender_filter: Sender address to match (case-insensitive substring).
+            filter_name: Filter name for log context.
+
+        Returns:
+            List of email IDs matching the sender filter.
+        """
+        if not email_ids or not self._connection:
+            return []
+
+        matched_ids: List[bytes] = []
+        id_to_from: dict[bytes, str] = {}
+        id_set = b",".join(email_ids)
+        try:
+            status, data = self._connection.fetch(id_set, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+            if status != "OK" or not data:
+                logger.warning(
+                    "Filter '%s': FETCH returned non-OK or empty data for %d IDs, returning all",
+                    filter_name, len(email_ids)
+                )
+                return email_ids
+        except (imaplib.IMAP4.error, imaplib.IMAP4.abort, OSError) as exc:
+            logger.warning(
+                "Filter '%s': Failed to fetch From headers: %s, returning all IDs",
+                filter_name, exc
+            )
+            return email_ids
+
+        for item in data:
+            if not isinstance(item, tuple) or len(item) < 2:
+                continue
+            id_part = item[0]
+            if not isinstance(id_part, bytes):
+                continue
+            id_str = id_part.split(b' ', 1)[0]
+            raw = item[1] if isinstance(item[1], bytes) else b""
+            from_value = ""
+            for line in raw.splitlines():
+                decoded = line.decode("utf-8", errors="replace").strip()
+                if decoded.lower().startswith("from:"):
+                    from_value = decoded[5:].strip()
+                    break
+            id_to_from[id_str] = from_value
+            if from_value and sender_filter.lower() in from_value.lower():
+                matched_ids.append(id_str)
+            else:
+                logger.debug(
+                    "Filter '%s': Email ID %s - From: '%s' (configured: '%s') - %s",
+                    filter_name, id_str.decode(), from_value, sender_filter,
+                    "no match" if from_value else "empty From header"
+                )
+
+        if len(id_to_from) != len(email_ids):
+            logger.warning(
+                "Filter '%s': FETCH returned %d headers for %d requested IDs. "
+                "Missing IDs may have been deleted or moved.",
+                filter_name, len(id_to_from), len(email_ids)
+            )
+
+        logger.info(
+            "Filter '%s': Client-side sender filter matched %d/%d emails (sender: '%s')",
+            filter_name, len(matched_ids), len(email_ids), sender_filter
+        )
+        return matched_ids
 
     def _log_unseen_senders(
         self,
